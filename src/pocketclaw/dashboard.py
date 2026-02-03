@@ -3,40 +3,37 @@
 Lightweight FastAPI server that serves the frontend and handles WebSocket communication.
 
 Changes:
+  - 2026-02-03: Cleaned up duplicate imports, fixed duplicate save() calls.
   - 2026-02-02: Added agent status to get_settings response.
   - 2026-02-02: Enhanced logging to show which backend is processing requests.
 """
 
 import asyncio
 import base64
+import io
 import logging
+import uuid
 from pathlib import Path
 from typing import Optional
 
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException, Depends, Query, Request
-from fastapi.responses import FileResponse, StreamingResponse
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException, Query, Request
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import StreamingResponse
 from fastapi.staticfiles import StaticFiles
-import uvicorn
-import io
+from fastapi.templating import Jinja2Templates
 import qrcode
+import uvicorn
 
-from pocketclaw.config import Settings, get_access_token, regenerate_token, get_settings, get_config_path
-
+from pocketclaw.config import Settings, get_access_token, regenerate_token, get_config_path
 from pocketclaw.scheduler import get_scheduler
 from pocketclaw.daemon import get_daemon
 from pocketclaw.skills import get_skill_loader, SkillExecutor
-# New imports for Nanobot Architecture
 from pocketclaw.bus import get_message_bus
 from pocketclaw.bus.adapters.websocket_adapter import WebSocketAdapter
 from pocketclaw.agents.loop import AgentLoop
-from pocketclaw.agents.loop import AgentLoop
-import uuid
-# Transparency Imports
 from pocketclaw.memory import get_memory_manager, MemoryType
 from pocketclaw.security import get_audit_logger
 from pocketclaw.bootstrap import DefaultBootstrapProvider
-# Tunnel access
 from pocketclaw.tunnel import get_tunnel_manager
 
 
@@ -50,13 +47,15 @@ active_connections: list[WebSocket] = []
 
 # Get frontend directory
 FRONTEND_DIR = Path(__file__).parent / "frontend"
+TEMPLATES_DIR = FRONTEND_DIR / "templates"
+
+# Initialize Templates
+templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
 
 # Create FastAPI app
 app = FastAPI(title="PocketPaw Dashboard")
 
 # Allow CORS for WebSocket
-from fastapi.middleware.cors import CORSMiddleware
-
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -138,9 +137,9 @@ async def shutdown_event():
 
 
 @app.get("/")
-async def index():
+async def index(request: Request):
     """Serve the main dashboard page."""
-    return FileResponse(FRONTEND_DIR / "index.html")
+    return templates.TemplateResponse("base.html", {"request": request})
 
 
 # ==================== Auth Middleware ====================
@@ -331,7 +330,6 @@ async def websocket_endpoint(websocket: WebSocket, token: Optional[str] = Query(
     
     # Legacy state
     agent_active = False 
-    agent_active = False 
     
     try:
         while True:
@@ -394,7 +392,6 @@ async def websocket_endpoint(websocket: WebSocket, token: Optional[str] = Query(
                     settings.anthropic_api_key = key
                     settings.llm_provider = "anthropic"
                     settings.save()
-                    settings.save()
                     await websocket.send_json({
                         "type": "message",
                         "content": "✅ Anthropic API key saved!"
@@ -402,7 +399,6 @@ async def websocket_endpoint(websocket: WebSocket, token: Optional[str] = Query(
                 elif provider == "openai" and key:
                     settings.openai_api_key = key
                     settings.llm_provider = "openai"
-                    settings.save()
                     settings.save()
                     await websocket.send_json({
                         "type": "message",
