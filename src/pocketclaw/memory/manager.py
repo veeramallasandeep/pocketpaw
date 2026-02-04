@@ -34,6 +34,11 @@ def create_memory_store(
     """
     if backend == "mem0":
         try:
+            # Check if mem0 is actually available before creating store
+            import importlib.util
+            if importlib.util.find_spec("mem0") is None:
+                raise ImportError("mem0ai not installed")
+
             from pocketclaw.memory.mem0_store import Mem0MemoryStore
             logger.info("Using Mem0 memory backend (semantic search enabled)")
             return Mem0MemoryStore(
@@ -42,7 +47,7 @@ def create_memory_store(
                 use_inference=use_inference,
             )
         except ImportError:
-            logger.warning("mem0ai not installed, falling back to file backend")
+            logger.warning("mem0ai not installed, falling back to file backend. Install with: pip install mem0ai")
             return FileMemoryStore(base_path)
     else:
         logger.info("Using file-based memory backend")
