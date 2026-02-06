@@ -11,9 +11,13 @@ from typing import Any
 
 class Channel(str, Enum):
     """Supported communication channels."""
+
     TELEGRAM = "telegram"
     WEBSOCKET = "websocket"
     CLI = "cli"
+    DISCORD = "discord"
+    SLACK = "slack"
+    WHATSAPP = "whatsapp"
     SYSTEM = "system"  # Internal (subagents, intentions)
 
 
@@ -24,6 +28,7 @@ class InboundMessage:
     Immutable dataclass representing an incoming message.
     The session_key uniquely identifies the conversation.
     """
+
     channel: Channel
     sender_id: str
     chat_id: str
@@ -53,6 +58,7 @@ class InboundMessage:
 @dataclass
 class OutboundMessage:
     """Message to send to a channel."""
+
     channel: Channel
     chat_id: str
     content: str
@@ -68,6 +74,7 @@ class OutboundMessage:
 @dataclass
 class SystemEvent:
     """Internal system events (tool execution, errors, etc.)."""
+
     event_type: str  # "tool_start", "tool_end", "error", "agent_start", "agent_end"
     data: dict[str, Any] = field(default_factory=dict)
     timestamp: datetime = field(default_factory=datetime.now)

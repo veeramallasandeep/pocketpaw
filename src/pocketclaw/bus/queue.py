@@ -37,7 +37,9 @@ class MessageBus:
 
     def __init__(self, max_queue_size: int = 1000):
         self._inbound: asyncio.Queue[InboundMessage] = asyncio.Queue(maxsize=max_queue_size)
-        self._outbound_subscribers: dict[Channel, list[Callable[[OutboundMessage], Awaitable[None]]]] = {}
+        self._outbound_subscribers: dict[
+            Channel, list[Callable[[OutboundMessage], Awaitable[None]]]
+        ] = {}
         self._system_subscribers: list[Callable[[SystemEvent], Awaitable[None]]] = []
 
     # =========================================================================
@@ -65,9 +67,7 @@ class MessageBus:
     # =========================================================================
 
     def subscribe_outbound(
-        self,
-        channel: Channel,
-        callback: Callable[[OutboundMessage], Awaitable[None]]
+        self, channel: Channel, callback: Callable[[OutboundMessage], Awaitable[None]]
     ) -> None:
         """Subscribe to outbound messages for a specific channel."""
         if channel not in self._outbound_subscribers:
@@ -76,9 +76,7 @@ class MessageBus:
         logger.info(f"📡 Subscribed to {channel.value} outbound")
 
     def unsubscribe_outbound(
-        self,
-        channel: Channel,
-        callback: Callable[[OutboundMessage], Awaitable[None]]
+        self, channel: Channel, callback: Callable[[OutboundMessage], Awaitable[None]]
     ) -> None:
         """Unsubscribe from outbound messages."""
         if channel in self._outbound_subscribers:
@@ -99,7 +97,9 @@ class MessageBus:
         tasks = [sub(message) for sub in subscribers]
         await asyncio.gather(*tasks, return_exceptions=True)
 
-    async def broadcast_outbound(self, message: OutboundMessage, exclude: Channel | None = None) -> None:
+    async def broadcast_outbound(
+        self, message: OutboundMessage, exclude: Channel | None = None
+    ) -> None:
         """Broadcast to all channels (except excluded)."""
         for channel, subscribers in self._outbound_subscribers.items():
             if channel == exclude:
