@@ -724,9 +724,13 @@ class PackageInstaller:
             pkg = PACKAGE
 
         cmd_parts = self.pip_cmd.split() + ["install"]
-        # uv pip outside a virtualenv needs --system
-        if "uv" in self.pip_cmd and not _in_virtualenv():
-            cmd_parts.append("--system")
+        if not _in_virtualenv():
+            if "uv" in self.pip_cmd:
+                # uv pip outside a virtualenv needs --system
+                cmd_parts.append("--system")
+            else:
+                # pip outside a virtualenv: install to ~/.local
+                cmd_parts.append("--user")
         if upgrade:
             cmd_parts.append("--upgrade")
         cmd_parts.append(pkg)
