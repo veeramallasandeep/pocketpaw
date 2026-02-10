@@ -24,6 +24,8 @@ from pathlib import Path
 
 VERSION = "0.2.0"
 PACKAGE = "pocketpaw"
+GIT_REPO = "https://github.com/pocketpaw/pocketpaw.git"
+GIT_BRANCH = "dev"
 CONFIG_DIR = Path.home() / ".pocketclaw"
 CONFIG_PATH = CONFIG_DIR / "config.json"
 
@@ -34,7 +36,7 @@ _HAS_INQUIRER = False
 
 
 def _bootstrap_deps() -> None:
-    """Install InquirerPy and rich if missing, using pip --user."""
+    """Install InquirerPy and rich if missing, with uv-first cascade."""
     global _HAS_RICH, _HAS_INQUIRER
     missing: list[str] = []
     if importlib.util.find_spec("rich") is None:
@@ -50,6 +52,22 @@ def _bootstrap_deps() -> None:
         return
 
     print(f"  Installing UI dependencies: {', '.join(missing)}...")
+
+    # Cascade 1: uv pip install --system
+    if shutil.which("uv"):
+        try:
+            cmd = ["uv", "pip", "install", "-q"] + missing
+            if not _in_virtualenv():
+                cmd.insert(3, "--system")
+            subprocess.check_call(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
+            importlib.invalidate_caches()
+            _HAS_RICH = True
+            _HAS_INQUIRER = True
+            return
+        except Exception:
+            pass
+
+    # Cascade 2: python -m pip install --user
     try:
         subprocess.check_call(
             [sys.executable, "-m", "pip", "install", "--user", "-q"] + missing,
@@ -59,9 +77,56 @@ def _bootstrap_deps() -> None:
         importlib.invalidate_caches()
         _HAS_RICH = True
         _HAS_INQUIRER = True
-    except Exception as exc:
-        print(f"  Warning: Could not install {', '.join(missing)}: {exc}")
-        print("  Falling back to plain text prompts.\n")
+        return
+    except subprocess.CalledProcessError as exc:
+        # Cascade 3: PEP 668 — retry with --break-system-packages
+        stderr_text = exc.stderr.decode(errors="replace") if exc.stderr else ""
+        if "externally-managed-environment" in stderr_text:
+            try:
+                subprocess.check_call(
+                    [
+                        sys.executable, "-m", "pip", "install",
+                        "--user", "-q", "--break-system-packages",
+                    ] + missing,
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.PIPE,
+                )
+                importlib.invalidate_caches()
+                _HAS_RICH = True
+                _HAS_INQUIRER = True
+                return
+            except Exception:
+                pass
+    except Exception:
+        pass
+
+    # Cascade 4: pip3 / pip on PATH
+    for pip_bin in ("pip3", "pip"):
+        if shutil.which(pip_bin):
+            try:
+                subprocess.check_call(
+                    [pip_bin, "install", "--user", "-q"] + missing,
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.PIPE,
+                )
+                importlib.invalidate_caches()
+                _HAS_RICH = True
+                _HAS_INQUIRER = True
+                return
+            except Exception:
+                pass
+
+    print(f"  Warning: Could not install {', '.join(missing)}.")
+    print("  Falling back to plain text prompts.\n")
+
+
+def _in_virtualenv() -> bool:
+    """Check if running inside a virtual environment."""
+    return (
+        hasattr(sys, "real_prefix")  # virtualenv
+        or (sys.prefix != sys.base_prefix)  # venv
+        or bool(os.environ.get("VIRTUAL_ENV"))
+    )
 
 
 _bootstrap_deps()
@@ -252,6 +317,12 @@ class SystemCheck:
 
         # Pip command
         info.pip_cmd = self.pip_cmd or self._detect_pip()
+        if not info.pip_cmd:
+            info.errors.append(
+                "No package installer found. Install uv: "
+                "curl -LsSf https://astral.sh/uv/install.sh | sh"
+            )
+            info.ok = False
 
         # Disk space
         try:
@@ -291,10 +362,35 @@ class SystemCheck:
         for cmd in ("pip3", "pip"):
             if shutil.which(cmd):
                 return cmd
-        return "pip"
+        # Last resort: try ensurepip bootstrap
+        try:
+            subprocess.check_call(
+                [sys.executable, "-m", "ensurepip", "--upgrade"],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+            return f"{sys.executable} -m pip"
+        except (subprocess.CalledProcessError, FileNotFoundError):
+            pass
+        return ""
 
     def _detect_existing(self) -> str | None:
         """Check if pocketpaw is already installed."""
+        # Try uv pip show first (works when only uv is installed)
+        if shutil.which("uv"):
+            try:
+                result = subprocess.run(
+                    ["uv", "pip", "show", PACKAGE],
+                    capture_output=True,
+                    text=True,
+                )
+                if result.returncode == 0:
+                    for line in result.stdout.splitlines():
+                        if line.startswith("Version:"):
+                            return line.split(":", 1)[1].strip()
+            except Exception:
+                pass
+        # Try pip show
         try:
             result = subprocess.run(
                 [sys.executable, "-m", "pip", "show", PACKAGE],
@@ -305,6 +401,13 @@ class SystemCheck:
                 for line in result.stdout.splitlines():
                     if line.startswith("Version:"):
                         return line.split(":", 1)[1].strip()
+        except Exception:
+            pass
+        # Try importlib.metadata
+        try:
+            import importlib.metadata
+
+            return importlib.metadata.version(PACKAGE)
         except Exception:
             pass
         return None
@@ -612,27 +715,77 @@ class InstallerUI:
 class PackageInstaller:
     """Build and run pip/uv install commands."""
 
-    def __init__(self, pip_cmd: str) -> None:
+    def __init__(self, pip_cmd: str, from_git: bool = False) -> None:
         self.pip_cmd = pip_cmd
+        self.from_git = from_git
+
+    def _build_pkg_spec(self, extras: list[str]) -> str:
+        """Build the package specifier, optionally pointing at git."""
+        extras_suffix = f"[{','.join(extras)}]" if extras else ""
+        if self.from_git:
+            return f"{PACKAGE}{extras_suffix} @ git+{GIT_REPO}@{GIT_BRANCH}"
+        return f"{PACKAGE}{extras_suffix}" if extras else PACKAGE
 
     def install(self, extras: list[str], upgrade: bool = False) -> bool:
         """Install pocketpaw with given extras. Returns True on success."""
-        if extras:
-            pkg = f"{PACKAGE}[{','.join(extras)}]"
-        else:
-            pkg = PACKAGE
+        pkg = self._build_pkg_spec(extras)
 
+        # Prefer `uv tool install` — isolated venv, no sudo, no PEP 668
+        if shutil.which("uv"):
+            ok = self._install_with_uv_tool(pkg, extras, upgrade)
+            if ok:
+                return True
+
+        # Fallback: pip-style install
         cmd_parts = self.pip_cmd.split() + ["install"]
+        if not _in_virtualenv():
+            if "uv" in self.pip_cmd:
+                cmd_parts.append("--system")
+            else:
+                cmd_parts.append("--user")
         if upgrade:
             cmd_parts.append("--upgrade")
         cmd_parts.append(pkg)
 
         if _HAS_RICH and console:
             with console.status(f"[bold cyan]Installing {pkg}...[/bold cyan]"):
-                return self._run_cmd(cmd_parts)
+                ok, stderr_text = self._run_cmd_capture(cmd_parts)
         else:
             print(f"  Installing {pkg}...")
-            return self._run_cmd(cmd_parts)
+            ok, stderr_text = self._run_cmd_capture(cmd_parts)
+
+        if ok:
+            return True
+
+        # PEP 668 retry (pip only — uv doesn't need this)
+        if "uv" not in self.pip_cmd and "externally-managed-environment" in stderr_text:
+            return self._retry_with_pep668_workaround(cmd_parts, pkg)
+
+        return False
+
+    def _install_with_uv_tool(
+        self, pkg: str, extras: list[str], upgrade: bool
+    ) -> bool:
+        """Install using `uv tool install` — isolated venv in ~/.local/share/uv/tools/."""
+        cmd = ["uv", "tool", "install"]
+        if upgrade:
+            cmd.append("--upgrade")
+        else:
+            cmd.append("--force")
+        if self.from_git:
+            # uv tool install needs --from for git sources
+            extras_suffix = f"[{','.join(extras)}]" if extras else ""
+            cmd.extend(["--from", f"{PACKAGE}{extras_suffix} @ git+{GIT_REPO}@{GIT_BRANCH}"])
+            cmd.append(PACKAGE)
+        else:
+            cmd.append(pkg)
+
+        if _HAS_RICH and console:
+            with console.status(f"[bold cyan]Installing {pkg} (uv tool)...[/bold cyan]"):
+                return self._run_cmd(cmd)
+        else:
+            print(f"  Installing {pkg} (uv tool)...")
+            return self._run_cmd(cmd)
 
     def install_playwright(self) -> bool:
         """Install Playwright browsers."""
@@ -645,6 +798,11 @@ class PackageInstaller:
 
     def _run_cmd(self, cmd: list[str]) -> bool:
         """Run a command, return True on success."""
+        ok, _ = self._run_cmd_capture(cmd)
+        return ok
+
+    def _run_cmd_capture(self, cmd: list[str]) -> tuple[bool, str]:
+        """Run a command, return (success, stderr_text)."""
         try:
             result = subprocess.run(
                 cmd,
@@ -653,22 +811,43 @@ class PackageInstaller:
                 timeout=600,
             )
             if result.returncode != 0:
+                stderr_text = result.stderr or ""
+                # Silently return for PEP 668 — caller will handle retry
+                if "externally-managed-environment" in stderr_text:
+                    return False, stderr_text
                 print(f"\n  Command failed: {' '.join(cmd)}")
-                if result.stderr:
-                    # Show last 20 lines of stderr
-                    lines = result.stderr.strip().splitlines()[-20:]
+                if stderr_text:
+                    lines = stderr_text.strip().splitlines()[-20:]
                     for line in lines:
                         print(f"    {line}")
                 print()
-                return False
-            return True
+                return False, stderr_text
+            return True, ""
         except subprocess.TimeoutExpired:
             print("\n  Installation timed out (10 minutes). Try again with a better connection.\n")
-            return False
+            return False, ""
         except FileNotFoundError:
             print(f"\n  Command not found: {cmd[0]}")
             print(f"  Make sure {self.pip_cmd} is installed and on your PATH.\n")
-            return False
+            return False, ""
+
+    def _retry_with_pep668_workaround(self, cmd_parts: list[str], pkg: str) -> bool:
+        """Retry pip install with --break-system-packages for PEP 668 environments."""
+        print("  Detected PEP 668 (externally-managed-environment), retrying...")
+        retry_cmd = cmd_parts.copy()
+        # Insert --break-system-packages after "install"
+        try:
+            idx = retry_cmd.index("install") + 1
+        except ValueError:
+            idx = len(retry_cmd)
+        retry_cmd.insert(idx, "--break-system-packages")
+
+        if _HAS_RICH and console:
+            with console.status(f"[bold cyan]Retrying {pkg}...[/bold cyan]"):
+                ok, _ = self._run_cmd_capture(retry_cmd)
+        else:
+            ok, _ = self._run_cmd_capture(retry_cmd)
+        return ok
 
 
 # ── Config Writer ──────────────────────────────────────────────────────
@@ -715,11 +894,14 @@ class ConfigWriter:
 class PocketPawInstaller:
     """Main installer orchestrating all steps."""
 
-    def __init__(self, pip_cmd: str = "", non_interactive: bool = False) -> None:
+    def __init__(
+        self, pip_cmd: str = "", non_interactive: bool = False, from_git: bool = False
+    ) -> None:
         self.system = SystemCheck(pip_cmd)
         self.ui = InstallerUI()
         self.config_writer = ConfigWriter()
         self.non_interactive = non_interactive
+        self.from_git = from_git
 
         # Collected state
         self.profile = "recommended"
@@ -848,7 +1030,7 @@ class PocketPawInstaller:
 
     def _do_install(self, launch: bool | None = None) -> int:
         """Execute the installation."""
-        pkg_installer = PackageInstaller(self.pip_cmd)
+        pkg_installer = PackageInstaller(self.pip_cmd, from_git=self.from_git)
 
         # Install package
         upgrade = self.system_info is not None and self.system_info.existing_version is not None
@@ -993,6 +1175,16 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Don't launch PocketPaw after install (non-interactive)",
     )
+    parser.add_argument(
+        "--uv-available",
+        action="store_true",
+        help="Hint that uv is on PATH (passed by install.sh)",
+    )
+    parser.add_argument(
+        "--from-git",
+        action="store_true",
+        help="Install from the dev branch on GitHub instead of PyPI",
+    )
     return parser
 
 
@@ -1006,6 +1198,7 @@ def main() -> None:
     installer = PocketPawInstaller(
         pip_cmd=args.pip_cmd,
         non_interactive=args.non_interactive,
+        from_git=args.from_git,
     )
     exit_code = installer.run(args)
     sys.exit(exit_code)

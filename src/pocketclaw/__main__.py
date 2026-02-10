@@ -231,11 +231,20 @@ async def run_multi_channel_mode(settings: Settings, args: argparse.Namespace) -
             await adapter.stop()
 
 
-def run_dashboard_mode(settings: Settings, port: int) -> None:
+def _is_headless() -> bool:
+    """Detect headless server (no display)."""
+    import os
+
+    if sys.platform == "darwin":
+        return False  # macOS always has a display
+    return not os.environ.get("DISPLAY") and not os.environ.get("WAYLAND_DISPLAY")
+
+
+def run_dashboard_mode(settings: Settings, host: str, port: int) -> None:
     """Run in web dashboard mode."""
     from pocketclaw.dashboard import run_dashboard
 
-    run_dashboard(host="127.0.0.1", port=port)
+    run_dashboard(host=host, port=port, open_browser=not _is_headless())
 
 
 def _check_extras_installed(args: argparse.Namespace) -> None:
@@ -334,6 +343,12 @@ Examples:
         help="Auto-fix fixable issues found by --security-audit",
     )
     parser.add_argument(
+        "--host",
+        type=str,
+        default=None,
+        help="Host to bind web server (default: auto-detect; 0.0.0.0 on headless servers)",
+    )
+    parser.add_argument(
         "--port", "-p", type=int, default=8888, help="Port for web server (default: 8888)"
     )
     parser.add_argument("--version", "-v", action="version", version="%(prog)s 0.2.0")
@@ -344,6 +359,17 @@ Examples:
     _check_extras_installed(args)
 
     settings = get_settings()
+
+    # Resolve host: explicit flag > config > auto-detect
+    if args.host is not None:
+        host = args.host
+    elif settings.web_host != "127.0.0.1":
+        host = settings.web_host
+    elif _is_headless():
+        host = "0.0.0.0"
+        logger.info("Headless server detected — binding to 0.0.0.0")
+    else:
+        host = "127.0.0.1"
 
     has_channel_flag = (
         args.discord
@@ -367,7 +393,7 @@ Examples:
             asyncio.run(run_multi_channel_mode(settings, args))
         else:
             # Default: web dashboard (also handles --web flag)
-            run_dashboard_mode(settings, args.port)
+            run_dashboard_mode(settings, host, args.port)
     except KeyboardInterrupt:
         logger.info("👋 PocketPaw stopped.")
 

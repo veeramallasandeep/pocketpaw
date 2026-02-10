@@ -1,6 +1,9 @@
 /**
  * PocketPaw WebSocket Module
  * Singleton WebSocket connection with proper state management
+ *
+ * Changes:
+ *   - 2026-02-06: Auto-upgrade to wss:// on HTTPS; send token via first message instead of URL.
  */
 
 class PocketPawSocket {
@@ -40,6 +43,10 @@ class PocketPawSocket {
             this.isConnecting = false;
             this.isConnected = true;
             this.reconnectAttempts = 0;
+            // Authenticate via first message (not URL query param)
+            if (token) {
+                this.ws.send(JSON.stringify({ action: 'authenticate', token }));
+            }
             this.emit('connected');
         };
 
