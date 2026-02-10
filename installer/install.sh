@@ -140,11 +140,13 @@ fi
 PYTHON_VER=$("$PYTHON" -c "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}')")
 printf '  Python:  %s (%s)\n' "$PYTHON_VER" "$(command -v "$PYTHON" 2>/dev/null || echo "$PYTHON")"
 
-# ── Find package installer (prefer uv > pip3 > pip) ────────────────────
+# ── Find package installer (uv-first strategy) ─────────────────────────
+# Always try to get uv first — it handles PEP 668 transparently (no sudo needed)
+ensure_uv
+
 PIP_CMD=""
-if command -v uv >/dev/null 2>&1; then
+if [ "$UV_AVAILABLE" = "1" ]; then
     PIP_CMD="uv pip"
-    UV_AVAILABLE=1
     printf '  Installer: uv pip\n'
 elif "$PYTHON" -m pip --version >/dev/null 2>&1; then
     PIP_CMD="$PYTHON -m pip"
@@ -157,38 +159,26 @@ elif command -v pip >/dev/null 2>&1; then
     printf '  Installer: pip\n'
 fi
 
-# Auto-install pip/uv if nothing found
+# Fallback: bootstrap pip if nothing found
 if [ -z "$PIP_CMD" ]; then
-    printf '  No pip or uv found. Attempting to install...\n'
+    printf '  No package installer found. Bootstrapping pip...\n'
 
-    # Cascade 1: install uv
-    if ensure_uv; then
-        PIP_CMD="uv pip"
-        printf '  Installer: uv pip\n'
+    # ensurepip
+    if "$PYTHON" -m ensurepip --upgrade >/dev/null 2>&1; then
+        PIP_CMD="$PYTHON -m pip"
+        printf '  \033[32m✓\033[0m pip bootstrapped via ensurepip\n'
     fi
 
-    # Cascade 2: ensurepip
+    # get-pip.py
     if [ -z "$PIP_CMD" ]; then
-        printf '  Trying ensurepip...\n'
-        if "$PYTHON" -m ensurepip --upgrade >/dev/null 2>&1; then
-            PIP_CMD="$PYTHON -m pip"
-            printf '  \033[32m✓\033[0m pip bootstrapped via ensurepip\n'
-            printf '  Installer: pip\n'
-        fi
-    fi
-
-    # Cascade 3: get-pip.py
-    if [ -z "$PIP_CMD" ]; then
-        printf '  Trying get-pip.py...\n'
         if $DOWNLOAD https://bootstrap.pypa.io/get-pip.py | "$PYTHON" - --user >/dev/null 2>&1; then
             export PATH="$HOME/.local/bin:$PATH"
             PIP_CMD="$PYTHON -m pip"
             printf '  \033[32m✓\033[0m pip installed via get-pip.py\n'
-            printf '  Installer: pip\n'
         fi
     fi
 
-    # Cascade 4: hard exit
+    # Hard exit
     if [ -z "$PIP_CMD" ]; then
         printf '\033[31mError:\033[0m No pip or uv could be installed.\n'
         printf '       Install uv manually:\n'
