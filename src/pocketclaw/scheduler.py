@@ -239,6 +239,14 @@ class ReminderScheduler:
         if self.callback:
             await self.callback(reminder)
 
+        # Push to notification channels
+        try:
+            from pocketclaw.bus.notifier import notify
+
+            await notify(f"Reminder: {reminder['text']}")
+        except Exception:
+            logger.debug("Notifier dispatch failed for reminder", exc_info=True)
+
         # Recurring reminders stay; one-shot reminders are removed
         if reminder.get("type", "one-shot") != "recurring":
             self.reminders = [r for r in self.reminders if r["id"] != reminder_id]

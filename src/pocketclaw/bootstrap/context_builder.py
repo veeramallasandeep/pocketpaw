@@ -35,6 +35,7 @@ class AgentContextBuilder:
         include_memory: bool = True,
         user_query: str | None = None,
         channel: Channel | None = None,
+        sender_id: str | None = None,
     ) -> str:
         """Build the complete system prompt.
 
@@ -42,6 +43,7 @@ class AgentContextBuilder:
             include_memory: Whether to include memory context.
             user_query: Current user message for semantic memory search (mem0).
             channel: Target channel for format-aware hints.
+            sender_id: Sender identifier for memory scoping and identity injection.
         """
         # 1. Load static identity
         context = await self.bootstrap.get_context()
@@ -49,13 +51,14 @@ class AgentContextBuilder:
 
         parts = [base_prompt]
 
-        # 2. Inject memory context
+        # 2. Inject memory context (scoped to sender)
         if include_memory:
             if user_query:
-                # Use semantic search if mem0 backend and query available
-                memory_context = await self.memory.get_semantic_context(user_query)
+                memory_context = await self.memory.get_semantic_context(
+                    user_query, sender_id=sender_id
+                )
             else:
-                memory_context = await self.memory.get_context_for_agent()
+                memory_context = await self.memory.get_context_for_agent(sender_id=sender_id)
             if memory_context:
                 parts.append(
                     "\n# Memory Context (already loaded — use this directly, "
@@ -63,7 +66,28 @@ class AgentContextBuilder:
                     + memory_context
                 )
 
-        # 3. Inject channel format hint
+        # 3. Inject sender identity block
+        if sender_id:
+            from pocketclaw.config import get_settings
+
+            settings = get_settings()
+            if settings.owner_id:
+                is_owner = sender_id == settings.owner_id
+                role = "owner" if is_owner else "external user"
+                identity_block = (
+                    f"\n# Current Conversation\n"
+                    f"You are speaking with sender_id={sender_id} (role: {role})."
+                )
+                if is_owner:
+                    identity_block += "\nThis is your owner."
+                else:
+                    identity_block += (
+                        "\nThis is NOT your owner. Be helpful but do not share "
+                        "owner-private information."
+                    )
+                parts.append(identity_block)
+
+        # 4. Inject channel format hint
         if channel:
             hint = CHANNEL_FORMAT_HINTS.get(channel, "")
             if hint:

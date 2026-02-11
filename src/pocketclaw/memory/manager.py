@@ -2,7 +2,9 @@
 # Created: 2026-02-02
 # Updated: 2026-02-04 - Added Mem0 backend support
 # Updated: 2026-02-07 - Configurable providers, auto-learn, semantic context - Memory System
+# Updated: 2026-02-11 - Sender-scoped memory isolation
 
+import hashlib
 import logging
 from datetime import UTC, datetime
 from pathlib import Path
@@ -152,6 +154,30 @@ class MemoryManager:
             )
 
     # =========================================================================
+    # User Scoping
+    # =========================================================================
+
+    def _resolve_user_id(self, sender_id: str | None = None) -> str:
+        """Map sender_id to a memory-scoped user_id.
+
+        - No sender_id or no owner_id configured → "default" (backward compat)
+        - sender_id == owner_id → "default" (owner's memory space)
+        - Otherwise → sha256(sender_id)[:16] (safe for filesystem paths)
+        """
+        if not sender_id:
+            return "default"
+
+        from pocketclaw.config import get_settings
+
+        settings = get_settings()
+        if not settings.owner_id:
+            return "default"
+        if sender_id == settings.owner_id:
+            return "default"
+
+        return hashlib.sha256(sender_id.encode()).hexdigest()[:16]
+
+    # =========================================================================
     # High-Level Operations
     # =========================================================================
 
@@ -160,6 +186,7 @@ class MemoryManager:
         content: str,
         tags: list[str] | None = None,
         header: str | None = None,
+        sender_id: str | None = None,
     ) -> str:
         """
         Store a long-term memory.
@@ -172,12 +199,13 @@ class MemoryManager:
         Returns:
             The memory entry ID.
         """
+        user_id = self._resolve_user_id(sender_id)
         entry = MemoryEntry(
             id="",
             type=MemoryType.LONG_TERM,
             content=content,
             tags=tags or [],
-            metadata={"header": header or "Memory"},
+            metadata={"header": header or "Memory", "user_id": user_id},
         )
         return await self._store.save(entry)
 
@@ -262,6 +290,7 @@ class MemoryManager:
         long_term_limit: int = 50,
         daily_limit: int = 20,
         entry_max_chars: int = 500,
+        sender_id: str | None = None,
     ) -> str:
         """
         Get memory context for injection into agent system prompt.
@@ -269,9 +298,12 @@ class MemoryManager:
         Returns a formatted string with relevant memories.
         """
         parts = []
+        user_id = self._resolve_user_id(sender_id)
 
-        # Long-term memories
-        long_term = await self._store.get_by_type(MemoryType.LONG_TERM, limit=long_term_limit)
+        # Long-term memories (scoped to user)
+        long_term = await self._store.get_by_type(
+            MemoryType.LONG_TERM, limit=long_term_limit, user_id=user_id
+        )
         if long_term:
             parts.append("## Long-term Memory\n")
             for entry in long_term:
@@ -459,6 +491,7 @@ class MemoryManager:
         messages: list[dict[str, str]],
         user_id: str | None = None,
         file_auto_learn: bool = False,
+        sender_id: str | None = None,
     ) -> dict:
         """Extract and evolve long-term facts from a conversation.
 
@@ -467,22 +500,26 @@ class MemoryManager:
 
         Args:
             messages: Recent conversation messages [{"role": "...", "content": "..."}].
-            user_id: User ID for scoping.
+            user_id: User ID for scoping (deprecated, use sender_id).
             file_auto_learn: Enable LLM extraction for file backend.
+            sender_id: Sender ID for memory scoping.
 
         Returns:
             Result dict (or empty dict if nothing extracted).
         """
+        resolved = user_id or self._resolve_user_id(sender_id)
         if hasattr(self._store, "auto_learn"):
-            return await self._store.auto_learn(messages, user_id=user_id)
+            return await self._store.auto_learn(messages, user_id=resolved)
 
         # File backend: use LLM-based fact extraction
         if file_auto_learn:
-            return await self._file_auto_learn(messages)
+            return await self._file_auto_learn(messages, sender_id=sender_id)
 
         return {}
 
-    async def _file_auto_learn(self, messages: list[dict[str, str]]) -> dict:
+    async def _file_auto_learn(
+        self, messages: list[dict[str, str]], sender_id: str | None = None
+    ) -> dict:
         """Extract facts from conversation using Haiku and save to file backend."""
         try:
             from anthropic import AsyncAnthropic
@@ -523,7 +560,7 @@ class MemoryManager:
             saved = 0
             for fact in facts:
                 if isinstance(fact, str) and fact.strip():
-                    await self.remember(fact.strip(), tags=["auto-learned"])
+                    await self.remember(fact.strip(), tags=["auto-learned"], sender_id=sender_id)
                     saved += 1
 
             return {"results": [{"fact": f} for f in facts[:saved]]}
@@ -532,7 +569,9 @@ class MemoryManager:
             logger.debug("File auto-learn failed", exc_info=True)
             return {}
 
-    async def get_semantic_context(self, query: str, limit: int = 5) -> str:
+    async def get_semantic_context(
+        self, query: str, limit: int = 5, sender_id: str | None = None
+    ) -> str:
         """Get semantically relevant memory context for a user query.
 
         Uses mem0 semantic search to find the most relevant memories
@@ -542,13 +581,15 @@ class MemoryManager:
         Args:
             query: The user's current message/query.
             limit: Max memories to include.
+            sender_id: Sender ID for memory scoping.
 
         Returns:
             Formatted context string for system prompt injection.
         """
+        user_id = self._resolve_user_id(sender_id)
         if hasattr(self._store, "semantic_search"):
             try:
-                results = await self._store.semantic_search(query, limit=limit)
+                results = await self._store.semantic_search(query, user_id=user_id, limit=limit)
                 if results:
                     parts = ["## Relevant Memories\n"]
                     for item in results:
@@ -563,7 +604,7 @@ class MemoryManager:
                 )
 
         # Fall back to standard context
-        return await self.get_context_for_agent()
+        return await self.get_context_for_agent(sender_id=sender_id)
 
     async def clear_session(self, session_key: str) -> int:
         """Clear session history."""

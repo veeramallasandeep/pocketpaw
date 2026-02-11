@@ -683,7 +683,9 @@ class TestContextBuilderWithMem0:
         prompt = await builder.build_system_prompt(user_query="tell me about Python")
         assert "PocketPaw" in prompt
         assert "Python" in prompt
-        mock_memory.get_semantic_context.assert_called_once_with("tell me about Python")
+        mock_memory.get_semantic_context.assert_called_once_with(
+            "tell me about Python", sender_id=None
+        )
 
     async def test_build_prompt_without_user_query(self):
         """Without user_query, should use standard context."""
@@ -703,4 +705,4 @@ class TestContextBuilderWithMem0:
             memory_manager=mock_memory,
         )
         await builder.build_system_prompt()
-        mock_memory.get_context_for_agent.assert_called_once()
+        mock_memory.get_context_for_agent.assert_called_once_with(sender_id=None)

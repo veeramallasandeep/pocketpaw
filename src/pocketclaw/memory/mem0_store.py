@@ -273,10 +273,12 @@ class Mem0MemoryStore:
             )
         else:
             # Long-term memories - use full inference for fact extraction
+            # Use per-sender user_id if set in metadata, else default
+            uid = entry.metadata.get("user_id") or self.user_id
             result = await self._run_sync(
                 self._memory.add,
                 entry.content,
-                user_id=self.user_id,
+                user_id=uid,
                 metadata=metadata,
                 infer=self.use_inference,
             )
@@ -392,8 +394,21 @@ class Mem0MemoryStore:
         self,
         memory_type: MemoryType,
         limit: int = 100,
+        **kwargs,
     ) -> list[MemoryEntry]:
-        """Get all memories of a specific type."""
+        """Get all memories of a specific type.
+
+        Accepts optional user_id kwarg for scoped retrieval.
+        """
+        user_id = kwargs.get("user_id")
+        if user_id and user_id != "default":
+            # Override user_id for scoped retrieval
+            old_uid = self.user_id
+            self.user_id = user_id
+            try:
+                return await self._get_filtered(memory_type, None, limit)
+            finally:
+                self.user_id = old_uid
         return await self._get_filtered(memory_type, None, limit)
 
     async def get_session(self, session_key: str) -> list[MemoryEntry]:

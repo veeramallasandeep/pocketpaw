@@ -178,8 +178,9 @@ class AgentLoop:
             )
 
             # 2. Build dynamic system prompt (identity + memory context + channel hint)
+            sender_id = message.sender_id
             system_prompt = await self.context_builder.build_system_prompt(
-                user_query=content, channel=message.channel
+                user_query=content, channel=message.channel, sender_id=sender_id
             )
 
             # 2a. Retrieve session history with compaction
@@ -358,8 +359,13 @@ class AgentLoop:
                     self.settings.memory_backend == "mem0" and self.settings.mem0_auto_learn
                 ) or (self.settings.memory_backend == "file" and self.settings.file_auto_learn)
                 if should_auto_learn:
-                    t = asyncio.create_task(
-                        self._auto_learn(message.content, full_response, session_key)
+                    asyncio.create_task(
+                        self._auto_learn(
+                            message.content,
+                            full_response,
+                            session_key,
+                            sender_id=sender_id,
+                        )
                     )
                     self._background_tasks.add(t)
                     t.add_done_callback(self._background_tasks.discard)
@@ -429,7 +435,13 @@ class AgentLoop:
             OutboundMessage(channel=original.channel, chat_id=original.chat_id, content=content)
         )
 
-    async def _auto_learn(self, user_msg: str, assistant_msg: str, session_key: str) -> None:
+    async def _auto_learn(
+        self,
+        user_msg: str,
+        assistant_msg: str,
+        session_key: str,
+        sender_id: str | None = None,
+    ) -> None:
         """Background task: feed conversation turn for fact extraction."""
         try:
             messages = [
@@ -437,7 +449,9 @@ class AgentLoop:
                 {"role": "assistant", "content": assistant_msg},
             ]
             result = await self.memory.auto_learn(
-                messages, file_auto_learn=self.settings.file_auto_learn
+                messages,
+                file_auto_learn=self.settings.file_auto_learn,
+                sender_id=sender_id,
             )
             extracted = len(result.get("results", []))
             if extracted:

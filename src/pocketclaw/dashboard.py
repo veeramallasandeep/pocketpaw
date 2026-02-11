@@ -135,6 +135,14 @@ async def broadcast_reminder(reminder: dict):
         except Exception:
             pass
 
+    # Push to notification channels
+    try:
+        from pocketclaw.bus.notifier import notify
+
+        await notify(f"Reminder: {reminder.get('text', '')}")
+    except Exception:
+        pass
+
 
 async def broadcast_intention(intention_id: str, chunk: dict):
     """Broadcast intention execution results to all connected clients."""
@@ -145,6 +153,15 @@ async def broadcast_intention(intention_id: str, chunk: dict):
         except Exception:
             if ws in active_connections:
                 active_connections.remove(ws)
+
+    # Push message-type intention chunks to notification channels
+    if chunk.get("type") == "message":
+        try:
+            from pocketclaw.bus.notifier import notify
+
+            await notify(chunk.get("content", ""))
+        except Exception:
+            pass
 
 
 async def _broadcast_audit_entry(entry: dict):

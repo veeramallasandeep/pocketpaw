@@ -332,9 +332,15 @@ class FileMemoryStore:
 
     def _load_index(self) -> None:
         """Load existing memories into index."""
-        # Load long-term memories
+        # Load long-term memories (root = owner/default)
         if self.long_term_file.exists():
             self._parse_markdown_file(self.long_term_file, MemoryType.LONG_TERM)
+
+        # Load per-user long-term memories
+        users_dir = self.base_path / "users"
+        if users_dir.exists():
+            for user_mem in users_dir.glob("*/MEMORY.md"):
+                self._parse_markdown_file(user_mem, MemoryType.LONG_TERM)
 
         # Load ALL daily files (not just today's)
         for daily_file in sorted(
@@ -345,6 +351,16 @@ class FileMemoryStore:
     def _parse_markdown_file(self, path: Path, memory_type: MemoryType) -> None:
         """Parse a markdown file into memory entries."""
         content = path.read_text(encoding="utf-8")
+
+        # Derive user_id from path for per-user memory files
+        user_id = "default"
+        users_dir = self.base_path / "users"
+        try:
+            if path.is_relative_to(users_dir):
+                # e.g. .../users/abc123/MEMORY.md → user_id = "abc123"
+                user_id = path.parent.name
+        except (TypeError, ValueError):
+            pass
 
         # Split by headers (## or ###)
         sections = re.split(r"\n(?=##+ )", content)
@@ -360,17 +376,32 @@ class FileMemoryStore:
 
             if body:
                 entry_id = _make_deterministic_id(path, header, body)
+                metadata = {"header": header, "source": str(path)}
+                if user_id != "default":
+                    metadata["user_id"] = user_id
                 self._index[entry_id] = MemoryEntry(
                     id=entry_id,
                     type=memory_type,
                     content=body,
                     tags=self._extract_tags(body),
-                    metadata={"header": header, "source": str(path)},
+                    metadata=metadata,
                 )
 
     def _extract_tags(self, content: str) -> list[str]:
         """Extract #tags from content."""
         return re.findall(r"#(\w+)", content)
+
+    def _get_user_memory_file(self, user_id: str = "default") -> Path:
+        """Get the MEMORY.md path for a given user.
+
+        - "default" → root MEMORY.md (owner / single-user)
+        - Others → users/{user_id}/MEMORY.md (auto-create dir)
+        """
+        if user_id == "default":
+            return self.long_term_file
+        user_dir = self.base_path / "users" / user_id
+        user_dir.mkdir(parents=True, exist_ok=True)
+        return user_dir / "MEMORY.md"
 
     def _get_daily_file(self, d: date) -> Path:
         """Get the path for a daily notes file."""
@@ -399,7 +430,8 @@ class FileMemoryStore:
         # For LONG_TERM and DAILY: compute deterministic ID from content
         header = entry.metadata.get("header", "Memory")
         if entry.type == MemoryType.LONG_TERM:
-            target_path = self.long_term_file
+            user_id = entry.metadata.get("user_id", "default")
+            target_path = self._get_user_memory_file(user_id)
         else:
             target_path = self._get_daily_file(date.today())
 
@@ -553,9 +585,27 @@ class FileMemoryStore:
 
         return [entry for _, entry in candidates[:limit]]
 
-    async def get_by_type(self, memory_type: MemoryType, limit: int = 100) -> list[MemoryEntry]:
-        """Get all memories of a specific type."""
-        return [e for e in self._index.values() if e.type == memory_type][:limit]
+    async def get_by_type(
+        self, memory_type: MemoryType, limit: int = 100, **kwargs
+    ) -> list[MemoryEntry]:
+        """Get all memories of a specific type.
+
+        For LONG_TERM type, accepts optional user_id kwarg to scope retrieval.
+        """
+        user_id = kwargs.get("user_id")
+        results = []
+        for e in self._index.values():
+            if e.type != memory_type:
+                continue
+            # Scope LONG_TERM to user_id if provided
+            if user_id and memory_type == MemoryType.LONG_TERM:
+                entry_uid = e.metadata.get("user_id", "default")
+                if entry_uid != user_id:
+                    continue
+            results.append(e)
+            if len(results) >= limit:
+                break
+        return results
 
     async def get_session(self, session_key: str) -> list[MemoryEntry]:
         """Get session history."""
