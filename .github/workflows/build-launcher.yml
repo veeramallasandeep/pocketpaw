@@ -1,0 +1,142 @@
+# Build desktop launcher for macOS and Windows
+# Triggers on release or manual dispatch
+# Created: 2026-02-10
+
+name: Build Desktop Launcher
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version tag (e.g. v0.2.5)"
+        required: false
+        default: "dev"
+
+permissions:
+  contents: write # needed to upload release assets
+
+jobs:
+  build:
+    strategy:
+      matrix:
+        include:
+          - os: macos-latest
+            platform: macOS
+            artifact: PocketPaw.dmg
+          - os: macos-13 # Intel Mac
+            platform: macOS-Intel
+            artifact: PocketPaw.dmg
+          - os: windows-latest
+            platform: Windows
+            artifact: PocketPaw-Setup.exe
+
+    name: Build — ${{ matrix.platform }}
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install build dependencies
+        run: pip install pyinstaller pystray Pillow
+
+      - name: Build with PyInstaller
+        run: python installer/launcher/build/build.py
+
+      # ── macOS: create .dmg ──────────────────────────────────────────
+      - name: Create .dmg (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          APP_PATH="dist/launcher/PocketPaw.app"
+          DMG_PATH="dist/launcher/PocketPaw.dmg"
+
+          if [ -d "$APP_PATH" ]; then
+            hdiutil create -volname "PocketPaw" \
+              -srcfolder "$APP_PATH" \
+              -ov -format UDZO \
+              "$DMG_PATH"
+            echo "DMG created: $DMG_PATH"
+          else
+            echo "::warning::.app not found, packaging folder instead"
+            hdiutil create -volname "PocketPaw" \
+              -srcfolder "dist/launcher/PocketPaw" \
+              -ov -format UDZO \
+              "$DMG_PATH"
+          fi
+
+      # ── Windows: create installer with Inno Setup ──────────────────
+      - name: Create installer (Windows)
+        if: runner.os == 'Windows'
+        run: |
+          $version = "${{ github.event.inputs.version || github.ref_name || 'dev' }}"
+
+          # Write Inno Setup script
+          @"
+          [Setup]
+          AppName=PocketPaw
+          AppVersion=$version
+          DefaultDirName={autopf}\PocketPaw
+          DefaultGroupName=PocketPaw
+          OutputDir=dist\launcher
+          OutputBaseFilename=PocketPaw-Setup
+          Compression=lzma2
+          SolidCompression=yes
+          SetupIconFile=installer\launcher\assets\icon.ico
+          UninstallDisplayIcon={app}\PocketPaw.exe
+          PrivilegesRequired=lowest
+
+          [Files]
+          Source: "dist\launcher\PocketPaw\*"; DestDir: "{app}"; Flags: recursesubdirs
+
+          [Icons]
+          Name: "{group}\PocketPaw"; Filename: "{app}\PocketPaw.exe"
+          Name: "{autodesktop}\PocketPaw"; Filename: "{app}\PocketPaw.exe"; Tasks: desktopicon
+
+          [Tasks]
+          Name: "desktopicon"; Description: "Create desktop shortcut"; GroupDescription: "Additional shortcuts:"
+
+          [Run]
+          Filename: "{app}\PocketPaw.exe"; Description: "Launch PocketPaw"; Flags: nowait postinstall skipifsilent
+          "@ | Out-File -FilePath "setup.iss" -Encoding utf8
+
+          # Inno Setup is pre-installed on GitHub Actions Windows runners
+          & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" setup.iss
+        shell: pwsh
+
+      # ── Upload artifacts ────────────────────────────────────────────
+      - name: Upload macOS .dmg
+        if: runner.os == 'macOS'
+        uses: actions/upload-artifact@v4
+        with:
+          name: PocketPaw-${{ matrix.platform }}
+          path: dist/launcher/PocketPaw.dmg
+
+      - name: Upload Windows installer
+        if: runner.os == 'Windows'
+        uses: actions/upload-artifact@v4
+        with:
+          name: PocketPaw-${{ matrix.platform }}
+          path: dist/launcher/PocketPaw-Setup.exe
+
+      # ── Attach to release (if triggered by release) ─────────────────
+      - name: Upload to release (macOS)
+        if: github.event_name == 'release' && runner.os == 'macOS'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          SUFFIX="${{ matrix.platform }}"
+          cp dist/launcher/PocketPaw.dmg "dist/launcher/PocketPaw-${SUFFIX}.dmg"
+          gh release upload "${{ github.ref_name }}" "dist/launcher/PocketPaw-${SUFFIX}.dmg" --clobber
+
+      - name: Upload to release (Windows)
+        if: github.event_name == 'release' && runner.os == 'Windows'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release upload "${{ github.ref_name }}" "dist/launcher/PocketPaw-Setup.exe" --clobber
