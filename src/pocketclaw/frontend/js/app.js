@@ -500,7 +500,7 @@ function app() {
             const labels = {
                 'claude_agent_sdk': '🚀 Claude SDK',
                 'pocketpaw_native': '🐾 PocketPaw',
-                'open_interpreter': '🤖 Open Interpreter'
+                'open_interpreter': '🤖 Open Interpreter (Experimental)'
             };
             return labels[this.settings.agentBackend] || this.settings.agentBackend;
         },
@@ -512,7 +512,7 @@ function app() {
             const descriptions = {
                 'claude_agent_sdk': 'Built-in tools: Bash, WebSearch, WebFetch, Read, Write, Edit, Glob, Grep',
                 'pocketpaw_native': 'Anthropic API + Open Interpreter executor. Direct subprocess for speed.',
-                'open_interpreter': 'Standalone agent. Works with local LLMs (Ollama) or cloud APIs.'
+                'open_interpreter': 'Experimental — Standalone agent. Works with local LLMs (Ollama) or cloud APIs.'
             };
             return descriptions[backend] || '';
         },

@@ -1,6 +1,5 @@
 """File browser tool."""
 
-import os
 from pathlib import Path
 from typing import Optional
 
@@ -39,11 +38,12 @@ def get_directory_keyboard(path: Path, jail: Optional[Path] = None) -> InlineKey
         buttons.append([InlineKeyboardButton("📁 ..", callback_data=f"fetch:{parent}")])
 
     try:
-        items = sorted(path.iterdir(), key=lambda x: (not x.is_dir(), x.name.lower()))
+        items = sorted(
+            (i for i in path.iterdir() if not i.name.startswith(".")),
+            key=lambda x: (not x.is_dir(), x.name.lower()),
+        )
 
-        for item in items[:20]:  # Limit to 20 items
-            if item.name.startswith("."):
-                continue  # Skip hidden files
+        for item in items[:20]:  # Limit to 20 visible items
 
             if item.is_dir():
                 buttons.append(
@@ -104,11 +104,10 @@ def list_directory(path_str: str, jail_str: Optional[str] = None) -> str:
     lines = [f"📂 **{path}**\n"]
 
     try:
-        items = sorted(path.iterdir(), key=lambda x: (not x.is_dir(), x.name.lower()))
+        visible = [i for i in path.iterdir() if not i.name.startswith(".")]
+        items = sorted(visible, key=lambda x: (not x.is_dir(), x.name.lower()))
 
-        for item in items[:30]:  # Limit to 30 items
-            if item.name.startswith("."):
-                continue
+        for item in items[:30]:  # Limit to 30 visible items
 
             if item.is_dir():
                 lines.append(f"📁 {item.name}/")

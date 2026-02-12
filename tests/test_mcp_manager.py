@@ -4,15 +4,11 @@ All MCP SDK imports are mocked since mcp is an optional dependency.
 """
 
 import json
-from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, MagicMock, patch
-
-import pytest
+from unittest.mock import AsyncMock, patch
 
 from pocketclaw.mcp.config import MCPServerConfig, load_mcp_config, save_mcp_config
 from pocketclaw.mcp.manager import MCPManager, MCPToolInfo, get_mcp_manager
-
 
 # ======================================================================
 # MCPServerConfig tests
@@ -152,7 +148,23 @@ class TestMCPToolInfo:
 class TestMCPManager:
     def test_get_server_status_empty(self):
         mgr = MCPManager()
-        assert mgr.get_server_status() == {}
+        with patch("pocketclaw.mcp.manager.load_mcp_config", return_value=[]):
+            assert mgr.get_server_status() == {}
+
+    def test_get_server_status_includes_config_servers(self):
+        """Servers from config file appear even if never started."""
+        mgr = MCPManager()
+        configs = [
+            MCPServerConfig(name="saved-server", transport="stdio", enabled=True),
+            MCPServerConfig(name="disabled-one", transport="http", enabled=False),
+        ]
+        with patch("pocketclaw.mcp.manager.load_mcp_config", return_value=configs):
+            status = mgr.get_server_status()
+        assert "saved-server" in status
+        assert status["saved-server"]["connected"] is False
+        assert status["saved-server"]["enabled"] is True
+        assert "disabled-one" in status
+        assert status["disabled-one"]["enabled"] is False
 
     def test_get_all_tools_empty(self):
         mgr = MCPManager()
@@ -192,7 +204,8 @@ class TestMCPManager:
         cfg = MCPServerConfig(name="weird", transport="grpc")
         result = await mgr.start_server(cfg)
         assert result is False
-        status = mgr.get_server_status()
+        with patch("pocketclaw.mcp.manager.load_mcp_config", return_value=[]):
+            status = mgr.get_server_status()
         assert "grpc" in status["weird"]["error"]
 
     async def test_start_server_stdio_success(self):
@@ -232,8 +245,9 @@ class TestMCPManager:
         try:
             result = await mgr.start_server(cfg)
             assert result is True
-            assert mgr.get_server_status()["fs"]["connected"] is True
-            assert mgr.get_server_status()["fs"]["tool_count"] == 1
+            with patch("pocketclaw.mcp.manager.load_mcp_config", return_value=[]):
+                assert mgr.get_server_status()["fs"]["connected"] is True
+                assert mgr.get_server_status()["fs"]["tool_count"] == 1
 
             tools = mgr.discover_tools("fs")
             assert len(tools) == 1

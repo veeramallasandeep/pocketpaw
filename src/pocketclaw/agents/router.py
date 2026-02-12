@@ -63,7 +63,9 @@ class AgentRouter:
             from pocketclaw.agents.open_interpreter import OpenInterpreterAgent
 
             self._agent = OpenInterpreterAgent(self.settings)
-            logger.info("🤖 [bold yellow]Open Interpreter[/] ─ Local/Cloud LLMs")
+            logger.info(
+                "🤖 [bold yellow]Open Interpreter[/] ─ Local/Cloud LLMs [dim](experimental)[/]"
+            )
 
         else:
             logger.warning(f"Unknown backend: {backend} → using claude_agent_sdk")

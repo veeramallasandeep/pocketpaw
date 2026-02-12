@@ -48,6 +48,7 @@ class MCPPreset:
     transport: str = "stdio"  # "stdio" | "http" | "sse"
     url: str = ""  # For http/sse transports
     docs_url: str = ""
+    needs_args: bool = False  # True if preset requires extra positional args (path, URL, etc.)
 
 
 # ---------------------------------------------------------------------------
@@ -380,6 +381,7 @@ _PRESETS: list[MCPPreset] = [
         command="npx",
         args=["-y", "@modelcontextprotocol/server-filesystem"],
         docs_url="https://github.com/modelcontextprotocol/servers",
+        needs_args=True,
     ),
     MCPPreset(
         id="postgres",
@@ -391,6 +393,7 @@ _PRESETS: list[MCPPreset] = [
         command="npx",
         args=["-y", "@modelcontextprotocol/server-postgres"],
         docs_url="https://github.com/modelcontextprotocol/servers",
+        needs_args=True,
     ),
     MCPPreset(
         id="sqlite",
@@ -402,6 +405,7 @@ _PRESETS: list[MCPPreset] = [
         command="npx",
         args=["-y", "@modelcontextprotocol/server-sqlite"],
         docs_url="https://github.com/modelcontextprotocol/servers",
+        needs_args=True,
     ),
     MCPPreset(
         id="git",

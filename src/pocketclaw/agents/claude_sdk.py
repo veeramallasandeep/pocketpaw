@@ -448,11 +448,13 @@ class ClaudeAgentSDK:
                     entry["args"] = cfg.args
                 if cfg.env:
                     entry["env"] = cfg.env
-            elif cfg.transport in ("http", "sse"):
+            elif cfg.transport in ("http", "sse", "streamable-http"):
                 if not cfg.url:
                     logger.warning("MCP server '%s' (%s) has no url", cfg.name, cfg.transport)
                     continue
-                entry = {"type": cfg.transport, "url": cfg.url}
+                # Claude SDK expects "http" for both SSE and streamable-http
+                sdk_type = "http" if cfg.transport == "streamable-http" else cfg.transport
+                entry = {"type": sdk_type, "url": cfg.url}
                 if cfg.env:
                     entry["headers"] = cfg.env
             else:

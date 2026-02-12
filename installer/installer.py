@@ -170,7 +170,7 @@ FEATURE_GROUPS: dict[str, list[tuple[str, str]]] = {
         ("browser", "Browser Automation (Playwright)"),
         ("memory", "Semantic Memory (mem0)"),
         ("desktop", "Desktop Control"),
-        ("native", "Open Interpreter Backend"),
+        ("native", "Open Interpreter Backend (Experimental)"),
     ],
     "Channels": [
         ("telegram", "Telegram"),
@@ -186,14 +186,14 @@ FEATURE_GROUPS: dict[str, list[tuple[str, str]]] = {
         ("extract", "URL Extraction"),
         ("voice", "Voice/TTS"),
         ("ocr", "OCR"),
-        ("mcp", "MCP Protocol"),
+        ("mcp", "MCP Protocol (Beta)"),
     ],
 }
 
 BACKENDS = {
     "claude_agent_sdk": "Claude Agent SDK (recommended)",
     "pocketpaw_native": "PocketPaw Native (Anthropic + Open Interpreter)",
-    "open_interpreter": "Open Interpreter (Ollama/OpenAI/Anthropic)",
+    "open_interpreter": "Open Interpreter (Experimental — Ollama/OpenAI/Anthropic)",
 }
 
 LLM_PROVIDERS = {
@@ -466,14 +466,14 @@ class InstallerUI:
         if _HAS_RICH and console:
             banner = (
                 "[bold magenta]🐾 PocketPaw[/bold magenta] "
-                f"[dim]v{VERSION}[/dim]\n\n"
+                f"[dim]v{VERSION}[/dim] [yellow](Beta)[/yellow]\n\n"
                 "[dim]The AI agent that runs on your laptop, not a datacenter.[/dim]\n"
                 "[dim]Self-hosted · Privacy-first · Multi-channel[/dim]"
             )
             console.print(Panel(banner, border_style="magenta", padding=(1, 2)))
             console.print()
         else:
-            print(f"\n  === PocketPaw v{VERSION} ===")
+            print(f"\n  === PocketPaw v{VERSION} (Beta) ===")
             print("  The AI agent that runs on your laptop.\n")
 
     def prompt_upgrade(self, current_version: str) -> str:

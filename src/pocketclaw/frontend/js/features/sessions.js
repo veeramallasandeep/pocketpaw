@@ -59,6 +59,17 @@ window.PocketPaw.Sessions = {
                 this.currentSessionId = id;
                 StateManager.save('lastSession', id);
 
+                // Clear streaming state from previous session
+                if (this.isStreaming) {
+                    if (this._streamTimeout) {
+                        clearTimeout(this._streamTimeout);
+                        this._streamTimeout = null;
+                    }
+                    this.isStreaming = false;
+                    this.isThinking = false;
+                    this.streamingContent = '';
+                }
+
                 // Check cache first for instant display
                 const cached = StateManager.getCachedSession(id);
                 if (cached) {
@@ -225,7 +236,10 @@ window.PocketPaw.Sessions = {
                 const messages = (data.messages || []).map(m => ({
                     role: m.role || 'user',
                     content: m.content || '',
-                    timestamp: m.timestamp || null
+                    time: m.timestamp
+                        ? new Date(m.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+                        : '',
+                    isNew: false
                 }));
                 this.messages = messages;
                 StateManager.save('lastSession', data.session_id);
@@ -233,9 +247,8 @@ window.PocketPaw.Sessions = {
 
                 // Scroll to bottom
                 this.$nextTick(() => {
-                    if (this.$refs.chatContainer) {
-                        this.$refs.chatContainer.scrollTop = this.$refs.chatContainer.scrollHeight;
-                    }
+                    const el = this.$refs.messages;
+                    if (el) el.scrollTop = el.scrollHeight;
                 });
             },
 

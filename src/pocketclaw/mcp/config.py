@@ -22,7 +22,7 @@ class MCPServerConfig:
     """Configuration for a single MCP server."""
 
     name: str
-    transport: str = "stdio"  # "stdio" or "http"
+    transport: str = "stdio"  # "stdio", "http" (SSE), or "streamable-http"
     command: str = ""  # For stdio: executable command
     args: list[str] = field(default_factory=list)  # For stdio: command arguments
     url: str = ""  # For http: server URL

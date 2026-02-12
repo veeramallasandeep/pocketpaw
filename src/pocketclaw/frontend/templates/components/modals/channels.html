@@ -161,19 +161,38 @@
                 <template x-if="channelStatus.whatsapp?.mode === 'personal'">
                     <div class="flex flex-col gap-4">
                         <p class="text-[12px] text-white/50">Scan the QR code with WhatsApp on your phone. No Meta account, webhooks, or tunnels needed.</p>
-                        <div x-show="whatsappQr && !whatsappConnected" class="flex flex-col items-center gap-3 py-3">
-                            <div class="bg-white p-3 rounded-xl">
-                                <img :src="'https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=' + encodeURIComponent(whatsappQr)" alt="WhatsApp QR" class="w-[200px] h-[200px]" />
+                        <!-- Not running yet — prompt to start -->
+                        <div x-show="!channelStatus.whatsapp?.running && !whatsappConnected" class="flex flex-col items-center gap-3 py-4">
+                            <div class="flex items-center justify-center w-12 h-12 rounded-full bg-white/5 border border-white/10">
+                                <i data-lucide="qr-code" class="w-6 h-6 text-white/40"></i>
                             </div>
-                            <span class="text-[12px] text-white/50">Scan with WhatsApp &rarr; Linked Devices &rarr; Link a Device</span>
+                            <span class="text-[13px] text-white/50 text-center">Start WhatsApp to generate a QR code for pairing</span>
+                            <button
+                                class="mt-1 bg-[var(--success-color)] hover:brightness-110 text-white py-2.5 px-6 rounded-[10px] text-[13px] font-medium transition-all active:scale-95 flex items-center gap-2 disabled:opacity-50"
+                                @click="toggleChannel('whatsapp')"
+                                :disabled="channelLoading"
+                            >
+                                <i x-show="channelLoading" data-lucide="loader-2" class="w-4 h-4 animate-spin"></i>
+                                <i x-show="!channelLoading" data-lucide="play" class="w-4 h-4"></i>
+                                <span>Start &amp; Pair</span>
+                            </button>
                         </div>
-                        <div x-show="whatsappConnected" class="flex items-center justify-center gap-2 py-4 bg-[var(--success-color)]/10 rounded-[12px] border border-[var(--success-color)]/20">
-                            <i data-lucide="check-circle" class="w-5 h-5 text-[var(--success-color)]"></i>
-                            <span class="text-[14px] font-medium text-[var(--success-color)]">WhatsApp Connected</span>
-                        </div>
+                        <!-- Running, waiting for QR -->
                         <div x-show="channelStatus.whatsapp?.running && !whatsappQr && !whatsappConnected" class="flex items-center justify-center gap-2 py-4 text-white/50">
                             <i data-lucide="loader-2" class="w-4 h-4 animate-spin"></i>
                             <span class="text-[13px]">Waiting for QR code...</span>
+                        </div>
+                        <!-- QR code visible -->
+                        <div x-show="whatsappQr && !whatsappConnected" class="flex flex-col items-center gap-3 py-3">
+                            <div class="bg-white p-3 rounded-xl">
+                                <img :src="generateQrDataUrl(whatsappQr)" alt="WhatsApp QR" class="w-[200px] h-[200px]" />
+                            </div>
+                            <span class="text-[12px] text-white/50">Scan with WhatsApp &rarr; Linked Devices &rarr; Link a Device</span>
+                        </div>
+                        <!-- Connected -->
+                        <div x-show="whatsappConnected" class="flex items-center justify-center gap-2 py-4 bg-[var(--success-color)]/10 rounded-[12px] border border-[var(--success-color)]/20">
+                            <i data-lucide="check-circle" class="w-5 h-5 text-[var(--success-color)]"></i>
+                            <span class="text-[14px] font-medium text-[var(--success-color)]">WhatsApp Connected</span>
                         </div>
                     </div>
                 </template>
@@ -346,8 +365,8 @@
                     @click="saveChannelConfig('google_chat')" :disabled="channelLoading || !channelForms.google_chat.service_account_key">Save Google Chat Config</button>
             </div>
 
-            <!-- Shared Start/Stop (not for webhooks) -->
-            <template x-if="channelsTab !== 'webhooks'">
+            <!-- Shared Start/Stop (not for webhooks; hidden for WhatsApp personal mode which has inline button) -->
+            <template x-if="channelsTab !== 'webhooks' && !(channelsTab === 'whatsapp' && channelStatus.whatsapp?.mode === 'personal' && !channelStatus.whatsapp?.running)">
                 <div class="flex gap-2 pt-4 mt-4 border-t border-[var(--glass-border)]">
                     <button
                         x-show="!channelStatus[channelsTab]?.running"

@@ -22,6 +22,7 @@ Changes:
 import asyncio
 import base64
 import io
+import json
 import logging
 import uuid
 from pathlib import Path
@@ -112,7 +113,7 @@ async def security_headers_middleware(request: Request, call_next):
         "style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net https://fonts.googleapis.com; "
         "font-src 'self' https://fonts.gstatic.com https://cdn.jsdelivr.net; "
         "img-src 'self' data: blob:; "
-        "connect-src 'self' ws: wss:; "
+        "connect-src 'self' ws: wss: https://cdn.jsdelivr.net https://unpkg.com; "
         "frame-ancestors 'none'"
     )
     # HSTS only when accessed via HTTPS (tunnel or reverse proxy)
@@ -530,29 +531,35 @@ async def remove_mcp_server(request: Request):
 
 @app.post("/api/mcp/toggle")
 async def toggle_mcp_server(request: Request):
-    """Enable or disable an MCP server."""
+    """Toggle an MCP server: start if stopped/disconnected, stop if running."""
+    from pocketclaw.mcp.config import load_mcp_config
     from pocketclaw.mcp.manager import get_mcp_manager
 
     data = await request.json()
     name = data.get("name", "")
 
     mgr = get_mcp_manager()
-    new_state = mgr.toggle_server_config(name)
-    if new_state is None:
+    status = mgr.get_server_status()
+    server_info = status.get(name)
+
+    if server_info is None:
         return {"error": f"Server '{name}' not found"}
 
-    # Start or stop based on new state
-    if new_state:
-        from pocketclaw.mcp.config import load_mcp_config
-
+    if server_info["connected"]:
+        # Running → stop and disable
+        mgr.toggle_server_config(name)  # enabled → False
+        await mgr.stop_server(name)
+        return {"status": "ok", "enabled": False}
+    else:
+        # Not connected → ensure enabled and (re)start
         configs = load_mcp_config()
         config = next((c for c in configs if c.name == name), None)
-        if config:
-            await mgr.start_server(config)
-    else:
-        await mgr.stop_server(name)
-
-    return {"status": "ok", "enabled": new_state}
+        if not config:
+            return {"error": f"No config found for '{name}'"}
+        if not config.enabled:
+            mgr.toggle_server_config(name)  # disabled → enabled
+        connected = await mgr.start_server(config)
+        return {"status": "ok", "enabled": True, "connected": connected}
 
 
 @app.post("/api/mcp/test")
@@ -608,6 +615,7 @@ async def list_mcp_presets():
             "transport": p.transport,
             "url": p.url,
             "docs_url": p.docs_url,
+            "needs_args": p.needs_args,
             "installed": p.id in installed_names,
             "env_keys": [
                 {
@@ -659,6 +667,383 @@ async def install_mcp_preset(request: Request):
         "status": "ok",
         "connected": connected,
         "tools": [{"name": t.name, "description": t.description} for t in tools],
+    }
+
+
+# ==================== MCP Registry API ====================
+
+_MCP_REGISTRY_BASE = "https://registry.modelcontextprotocol.io"
+
+# Server name parts that are too generic to use alone as a config name.
+_GENERIC_SERVER_PARTS = {"mcp", "server", "mcp-server", "main", "app", "api"}
+
+
+def _derive_registry_short_name(raw_name: str, title: str | None = None) -> str:
+    """Derive a short, readable config name from a registry server name.
+
+    Examples:
+        "com.zomato/mcp"      -> "zomato-mcp"
+        "acme/weather-server"  -> "weather-server"
+        "@anthropic/claude"    -> "claude"
+        "simple-tool"          -> "simple-tool"
+    """
+    if not raw_name:
+        return ""
+
+    if "/" not in raw_name:
+        return raw_name
+
+    parts = raw_name.split("/")
+    org = parts[0]
+    server_part = parts[-1]
+
+    # Clean up org: "com.zomato" -> "zomato", "@anthropic" -> "anthropic"
+    if "." in org:
+        org = org.rsplit(".", 1)[-1]
+    org = org.lstrip("@")
+
+    # If the server part is too generic, combine with org for disambiguation
+    if server_part.lower() in _GENERIC_SERVER_PARTS:
+        return f"{org}-{server_part}"
+
+    return server_part
+
+
+@app.get("/api/mcp/registry/search")
+async def search_mcp_registry(
+    q: str = "",
+    limit: int = 30,
+    cursor: str = "",
+):
+    """Proxy search to the official MCP Registry (avoids CORS)."""
+    import httpx
+
+    params: dict[str, str | int] = {"limit": min(limit, 100)}
+    if q:
+        params["search"] = q
+    if cursor:
+        params["cursor"] = cursor
+
+    try:
+        async with httpx.AsyncClient(timeout=15.0) as client:
+            resp = await client.get(
+                f"{_MCP_REGISTRY_BASE}/v0/servers",
+                params=params,
+            )
+            resp.raise_for_status()
+            data = resp.json()
+
+            # Registry wraps each entry as {server: {...}, _meta: {...}}.
+            # Unwrap so the frontend gets flat server objects.
+            # Also: lift environmentVariables from packages[0] to server
+            # level, remove $schema ($ prefix can confuse Alpine.js proxies),
+            # and ensure expected fields have defaults.
+            servers = []
+            for entry in data.get("servers", []):
+                srv = entry.get("server", entry)
+                srv["_meta"] = entry.get("_meta", {})
+                # Remove $schema — $ prefix can interfere with Alpine.js
+                srv.pop("$schema", None)
+                # Ensure expected fields exist
+                srv.setdefault("name", "")
+                srv.setdefault("description", "")
+                srv.setdefault("packages", [])
+                srv.setdefault("remotes", [])
+                srv.setdefault("environmentVariables", [])
+                # Lift env vars from the first package to the server level
+                if not srv["environmentVariables"]:
+                    for pkg in srv.get("packages", []):
+                        pkg_env = pkg.get("environmentVariables")
+                        if pkg_env:
+                            srv["environmentVariables"] = pkg_env
+                            break
+                if srv["name"]:  # skip entries without a name
+                    servers.append(srv)
+
+            return {"servers": servers, "metadata": data.get("metadata", {})}
+    except Exception as exc:
+        logger.warning("MCP registry search failed: %s", exc)
+        return {"servers": [], "metadata": {"count": 0}, "error": str(exc)}
+
+
+@app.post("/api/mcp/registry/install")
+async def install_from_registry(request: Request):
+    """Install an MCP server from registry metadata.
+
+    Expects a JSON body with the server's registry data (name, packages/remotes,
+    environmentVariables) and user-supplied env values.
+    """
+    from fastapi.responses import JSONResponse
+
+    from pocketclaw.mcp.config import MCPServerConfig
+    from pocketclaw.mcp.manager import get_mcp_manager
+
+    data = await request.json()
+    server = data.get("server", {})
+    user_env = data.get("env", {})
+
+    # Derive a short, readable name from the registry name.
+    # e.g. "com.zomato/mcp" -> "zomato-mcp", "acme/weather-server" -> "weather-server"
+    raw_name = server.get("name", "")
+    short_name = _derive_registry_short_name(raw_name, server.get("title"))
+    if not short_name:
+        return JSONResponse({"error": "Missing server name"}, status_code=400)
+
+    # Try remotes first (HTTP transport — simplest, no npm needed)
+    remotes = server.get("remotes", [])
+    packages = server.get("packages", [])
+
+    config = None
+
+    if remotes:
+        remote = remotes[0]
+        # Registry API uses "type" (e.g. "streamable-http"), legacy uses "transportType"
+        transport = remote.get("type", remote.get("transportType", "http"))
+        # Normalize SSE to "http" but keep "streamable-http" distinct — they need
+        # different MCP SDK clients.
+        if transport == "sse":
+            transport = "http"
+        elif transport not in ("http", "streamable-http"):
+            transport = "http"  # safe fallback
+        config = MCPServerConfig(
+            name=short_name,
+            transport=transport,
+            url=remote.get("url", ""),
+            env=user_env,
+            enabled=True,
+        )
+    elif packages:
+        pkg = packages[0]
+        registry_type = pkg.get("registryType", "")
+        pkg_name = pkg.get("name", "") or pkg.get("identifier", "")
+        runtime = pkg.get("runtime", "node")
+
+        if registry_type == "docker":
+            args = ["run", "-i", "--rm"]
+            for ra in pkg.get("runtimeArguments", []):
+                if ra.get("isFixed"):
+                    args.append(ra.get("value", ""))
+            args.append(pkg_name)
+            config = MCPServerConfig(
+                name=short_name,
+                transport="stdio",
+                command="docker",
+                args=args,
+                env=user_env,
+                enabled=True,
+            )
+        elif registry_type == "pypi":
+            config = MCPServerConfig(
+                name=short_name,
+                transport="stdio",
+                command="uvx",
+                args=[pkg_name],
+                env=user_env,
+                enabled=True,
+            )
+        elif registry_type == "npm" or runtime == "node":
+            args = ["-y", pkg_name]
+            for pa in pkg.get("packageArguments", []):
+                if pa.get("isFixed"):
+                    args.append(pa.get("value", ""))
+            config = MCPServerConfig(
+                name=short_name,
+                transport="stdio",
+                command="npx",
+                args=args,
+                env=user_env,
+                enabled=True,
+            )
+
+    if config is None:
+        return JSONResponse(
+            {"error": "Could not determine install method from registry data"},
+            status_code=400,
+        )
+
+    mgr = get_mcp_manager()
+    mgr.add_server_config(config)
+    connected = await mgr.start_server(config)
+    tools = mgr.discover_tools(config.name) if connected else []
+
+    result: dict = {
+        "status": "ok",
+        "name": config.name,
+        "connected": connected,
+        "tools": [{"name": t.name, "description": t.description} for t in tools],
+    }
+    # Surface connection error so the frontend can display it
+    if not connected:
+        status = mgr.get_server_status()
+        srv = status.get(config.name, {})
+        if srv.get("error"):
+            result["error"] = srv["error"]
+    return result
+
+
+# ==================== Skills Library API ====================
+
+
+@app.get("/api/skills")
+async def list_installed_skills():
+    """List all installed user-invocable skills."""
+    loader = get_skill_loader()
+    loader.reload()
+    return [
+        {
+            "name": s.name,
+            "description": s.description,
+            "argument_hint": s.argument_hint,
+        }
+        for s in loader.get_invocable()
+    ]
+
+
+@app.get("/api/skills/search")
+async def search_skills_library(q: str = "", limit: int = 30):
+    """Proxy search to skills.sh API (avoids CORS for browsers)."""
+    import httpx
+
+    if not q:
+        return {"skills": [], "count": 0}
+
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            resp = await client.get(
+                "https://skills.sh/api/search",
+                params={"q": q, "limit": limit},
+            )
+            resp.raise_for_status()
+            return resp.json()
+    except httpx.HTTPError as exc:
+        logger.warning("skills.sh search failed: %s", exc)
+        return {"skills": [], "count": 0, "error": str(exc)}
+
+
+@app.post("/api/skills/install")
+async def install_skill(request: Request):
+    """Install a skill by cloning its GitHub repo and copying the skill directory."""
+    import shutil
+    import tempfile
+    from pathlib import Path
+
+    from fastapi.responses import JSONResponse
+
+    data = await request.json()
+    source = data.get("source", "").strip()
+    if not source:
+        return JSONResponse({"error": "Missing 'source' field"}, status_code=400)
+
+    if ".." in source or ";" in source or "|" in source or "&" in source:
+        return JSONResponse({"error": "Invalid source format"}, status_code=400)
+
+    parts = source.split("/")
+    if len(parts) < 2:
+        return JSONResponse(
+            {"error": "Source must be owner/repo or owner/repo/skill"}, status_code=400
+        )
+
+    owner, repo = parts[0], parts[1]
+    skill_name = parts[2] if len(parts) >= 3 else None
+
+    install_dir = Path.home() / ".agents" / "skills"
+    install_dir.mkdir(parents=True, exist_ok=True)
+
+    try:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            proc = await asyncio.create_subprocess_exec(
+                "git", "clone", "--depth=1",
+                f"https://github.com/{owner}/{repo}.git",
+                tmpdir,
+                stdin=asyncio.subprocess.DEVNULL,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+            _, stderr = await asyncio.wait_for(proc.communicate(), timeout=30)
+            if proc.returncode != 0:
+                err = stderr.decode(errors="replace").strip()
+                return JSONResponse({"error": f"Clone failed: {err}"}, status_code=500)
+
+            tmp = Path(tmpdir)
+
+            # Find skill directories containing SKILL.md.
+            # Repos may store skills at root level or inside a skills/ subdirectory.
+            skill_dirs: list[tuple[str, Path]] = []
+
+            if skill_name:
+                for candidate in [tmp / skill_name, tmp / "skills" / skill_name]:
+                    if (candidate / "SKILL.md").exists():
+                        skill_dirs.append((skill_name, candidate))
+                        break
+            else:
+                for scan_dir in [tmp, tmp / "skills"]:
+                    if not scan_dir.is_dir():
+                        continue
+                    for item in sorted(scan_dir.iterdir()):
+                        if item.is_dir() and (item / "SKILL.md").exists():
+                            skill_dirs.append((item.name, item))
+
+            if not skill_dirs:
+                return JSONResponse(
+                    {"error": f"No SKILL.md found for '{skill_name or source}'"},
+                    status_code=404,
+                )
+
+            installed = []
+            for name, src_dir in skill_dirs:
+                dest = install_dir / name
+                if dest.exists():
+                    shutil.rmtree(dest)
+                shutil.copytree(src_dir, dest)
+                installed.append(name)
+
+            loader = get_skill_loader()
+            loader.reload()
+            return {"status": "ok", "installed": installed}
+
+    except asyncio.TimeoutError:
+        return JSONResponse({"error": "Clone timed out (30s)"}, status_code=504)
+    except Exception as exc:
+        logger.exception("Skill install failed")
+        return JSONResponse({"error": str(exc)}, status_code=500)
+
+
+@app.post("/api/skills/remove")
+async def remove_skill(request: Request):
+    """Remove an installed skill by deleting its directory."""
+    import shutil
+    from pathlib import Path
+
+    from fastapi.responses import JSONResponse
+
+    data = await request.json()
+    name = data.get("name", "").strip()
+    if not name:
+        return JSONResponse({"error": "Missing 'name' field"}, status_code=400)
+
+    if ".." in name or "/" in name or ";" in name or "|" in name or "&" in name:
+        return JSONResponse({"error": "Invalid name format"}, status_code=400)
+
+    # Check both skill locations
+    for base in [Path.home() / ".agents" / "skills", Path.home() / ".pocketclaw" / "skills"]:
+        skill_dir = base / name
+        if skill_dir.is_dir() and (skill_dir / "SKILL.md").exists():
+            shutil.rmtree(skill_dir)
+            loader = get_skill_loader()
+            loader.reload()
+            return {"status": "ok"}
+
+    return JSONResponse({"error": f"Skill '{name}' not found"}, status_code=404)
+
+
+@app.post("/api/skills/reload")
+async def reload_skills():
+    """Force reload skills from disk."""
+    loader = get_skill_loader()
+    skills = loader.reload()
+    return {
+        "status": "ok",
+        "count": len([s for s in skills.values() if s.user_invocable]),
     }
 
 
@@ -2194,17 +2579,37 @@ async def websocket_endpoint(
 
 @app.get("/api/identity")
 async def get_identity():
-    """Get agent identity context."""
-    # config_path = get_config_path()
+    """Get agent identity context (all 4 identity files)."""
     provider = DefaultBootstrapProvider(get_config_path().parent)
     context = await provider.get_context()
     return {
         "identity_file": context.identity,
         "soul_file": context.soul,
         "style_file": context.style,
-        # "tools_file": context.tools, # Not in BootstrapContext
-        # "user_file": context.user,   # Not in BootstrapContext
+        "user_file": context.user_profile,
     }
+
+
+@app.put("/api/identity")
+async def save_identity(request: Request):
+    """Save edits to agent identity files. Changes take effect on the next message."""
+    data = await request.json()
+    identity_dir = get_config_path().parent / "identity"
+    identity_dir.mkdir(parents=True, exist_ok=True)
+
+    file_map = {
+        "identity_file": "IDENTITY.md",
+        "soul_file": "SOUL.md",
+        "style_file": "STYLE.md",
+        "user_file": "USER.md",
+    }
+    updated = []
+    for key, filename in file_map.items():
+        if key in data and isinstance(data[key], str):
+            (identity_dir / filename).write_text(data[key])
+            updated.append(filename)
+
+    return {"ok": True, "updated": updated}
 
 
 @app.get("/api/sessions")
@@ -2359,15 +2764,14 @@ async def delete_long_term_memory(entry_id: str):
 
 
 @app.get("/api/audit")
-async def get_audit_log(limit: int = 50):
+async def get_audit_log(limit: int = 100):
     """Get audit logs."""
     logger = get_audit_logger()
     if not logger.log_path.exists():
         return []
 
-    logs = []
+    logs: list[dict] = []
     try:
-        # Read last N lines efficiently-ish
         with open(logger.log_path) as f:
             lines = f.readlines()
 
@@ -2375,15 +2779,27 @@ async def get_audit_log(limit: int = 50):
             if len(logs) >= limit:
                 break
             try:
-                import json
-
                 logs.append(json.loads(line))
-            except:
+            except Exception:
                 pass
-    except Exception as e:
-        return {"error": str(e)}
+    except Exception:
+        return []
 
     return logs
+
+
+@app.delete("/api/audit")
+async def clear_audit_log():
+    """Clear the audit log file."""
+    logger = get_audit_logger()
+    try:
+        if logger.log_path.exists():
+            logger.log_path.write_text("")
+        return {"ok": True}
+    except Exception as e:
+        from fastapi.responses import JSONResponse
+
+        return JSONResponse({"error": str(e)}, status_code=500)
 
 
 @app.post("/api/security-audit")

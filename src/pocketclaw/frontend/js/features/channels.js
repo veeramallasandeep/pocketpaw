@@ -424,6 +424,22 @@ window.PocketPaw.Channels = {
             },
 
             /**
+             * Generate a QR code as a data URL (client-side, no external API)
+             */
+            generateQrDataUrl(data) {
+                if (!data || typeof qrcode === 'undefined') return '';
+                try {
+                    const qr = qrcode(0, 'L');
+                    qr.addData(data);
+                    qr.make();
+                    return qr.createDataURL(4, 0);
+                } catch (e) {
+                    console.error('QR generation failed', e);
+                    return '';
+                }
+            },
+
+            /**
              * Copy text to clipboard
              */
             async copyToClipboard(text) {

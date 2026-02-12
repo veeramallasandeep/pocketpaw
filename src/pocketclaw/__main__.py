@@ -59,7 +59,7 @@ async def run_telegram_mode(settings: Settings) -> None:
         settings = get_settings(force_reload=True)
 
     # Start the bot
-    logger.info("🚀 Starting PocketPaw bot...")
+    logger.info("🚀 Starting PocketPaw (Beta)...")
     await run_bot(settings)
 
 
@@ -299,7 +299,7 @@ def _check_extras_installed(args: argparse.Namespace) -> None:
 def main() -> None:
     """Main entry point."""
     parser = argparse.ArgumentParser(
-        description="🐾 PocketPaw - The AI agent that runs on your laptop",
+        description="🐾 PocketPaw (Beta) - The AI agent that runs on your laptop",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:

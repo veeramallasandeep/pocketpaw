@@ -22,6 +22,7 @@
   <div class="flex items-center gap-3 px-2 mb-3 shrink-0">
     <i data-lucide="paw-print" class="w-5 h-5 text-accent"></i>
     <span class="text-lg font-semibold tracking-tight">PocketPaw</span>
+    <span class="px-1.5 py-0.5 text-[8px] font-bold uppercase tracking-wider bg-amber-500/20 text-amber-400 border border-amber-500/30 rounded-full leading-none">Beta</span>
     <button class="ml-auto md:hidden" @click="sidebarOpen = false">
         <i data-lucide="x" class="w-5 h-5 text-white/50"></i>
     </button>
@@ -346,6 +347,7 @@
         </button>
         <button class="flex items-center gap-2 px-2 py-1.5 rounded-lg text-xs text-white/60 hover:text-white hover:bg-white/5 transition-colors" @click="openMCP(); sidebarOpen = false">
           <i data-lucide="plug" class="w-3.5 h-3.5"></i> MCP
+          <span class="text-[8px] font-bold uppercase tracking-wider text-amber-400/70">Beta</span>
           <span x-show="connectedMCPCount() > 0" class="ml-auto text-[10px] bg-accent/20 text-accent px-1.5 rounded-full" x-text="connectedMCPCount()"></span>
         </button>
         <button class="flex items-center gap-2 px-2 py-1.5 rounded-lg text-xs text-white/60 hover:text-white hover:bg-white/5 transition-colors" @click="openSettings(); sidebarOpen = false">

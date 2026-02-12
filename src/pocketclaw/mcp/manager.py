@@ -121,8 +121,19 @@ class MCPManager:
                 timeout = config.timeout or 30
                 if config.transport == "stdio":
                     await asyncio.wait_for(self._connect_stdio(state), timeout=timeout)
+                elif config.transport == "streamable-http":
+                    # Streamable HTTP uses a different MCP SDK client than SSE.
+                    await self._connect_remote_with_timeout(
+                        state, timeout, self._connect_streamable_http
+                    )
                 elif config.transport == "http":
-                    await asyncio.wait_for(self._connect_http(state), timeout=timeout)
+                    # HTTP/SSE connections use anyio cancel scopes internally.
+                    # asyncio.wait_for cancels the task on timeout, which disrupts
+                    # anyio's cancel scope cleanup and causes TaskGroup errors.
+                    # Instead, run with a manual timeout that doesn't cancel the task.
+                    await self._connect_remote_with_timeout(
+                        state, timeout, self._connect_sse
+                    )
                 else:
                     state.error = f"Unknown transport: {config.transport}"
                     logger.error(state.error)
@@ -141,11 +152,15 @@ class MCPManager:
             except TimeoutError:
                 state.error = f"Connection timed out after {timeout}s"
                 state.connected = False
+                await self._cleanup_state(state)
                 logger.error("MCP server '%s' timed out after %ds", config.name, timeout)
                 return False
-            except Exception as e:
+            except BaseException as e:
+                # Catch BaseException to handle ExceptionGroup / BaseExceptionGroup
+                # from anyio TaskGroup failures in the MCP library.
                 state.error = str(e)
                 state.connected = False
+                await self._cleanup_state(state)
                 logger.error("Failed to start MCP server '%s': %s", config.name, e)
                 return False
 
@@ -180,14 +195,63 @@ class MCPManager:
             state.client = None
             raise
 
-    async def _connect_http(self, state: _ServerState) -> None:
-        """Connect to an MCP server via HTTP/SSE."""
+    async def _connect_remote_with_timeout(
+        self,
+        state: _ServerState,
+        timeout: int,
+        connect_fn: Any,
+    ) -> None:
+        """Connect to a remote MCP server with safe timeout handling.
+
+        Unlike asyncio.wait_for, this approach doesn't cancel the connection task
+        directly — which would disrupt anyio's cancel scope inside the MCP client and
+        cause TaskGroup errors.  Instead we run the connection in a shielded task
+        and handle timeout ourselves.
+        """
+        task = asyncio.ensure_future(connect_fn(state))
+        try:
+            await asyncio.wait_for(asyncio.shield(task), timeout=timeout)
+        except TimeoutError:
+            # The shielded task is still running — cancel it and wait for cleanup.
+            task.cancel()
+            try:
+                await task
+            except (asyncio.CancelledError, BaseException):
+                pass
+            # Clean up any partially-opened resources.
+            await self._cleanup_state(state)
+            raise
+
+    async def _connect_sse(self, state: _ServerState) -> None:
+        """Connect to an MCP server via SSE (Server-Sent Events)."""
         from mcp import ClientSession
         from mcp.client.sse import sse_client
 
         ctx = sse_client(url=state.config.url)
         streams = await ctx.__aenter__()
         state.client = ctx
+        state.read_stream = streams[0]
+        state.write_stream = streams[1]
+
+        try:
+            session = ClientSession(state.read_stream, state.write_stream)
+            await session.__aenter__()
+            await session.initialize()
+            state.session = session
+        except Exception:
+            await ctx.__aexit__(None, None, None)
+            state.client = None
+            raise
+
+    async def _connect_streamable_http(self, state: _ServerState) -> None:
+        """Connect to an MCP server via Streamable HTTP transport."""
+        from mcp import ClientSession
+        from mcp.client.streamable_http import streamablehttp_client
+
+        ctx = streamablehttp_client(url=state.config.url)
+        streams = await ctx.__aenter__()
+        state.client = ctx
+        # streamablehttp_client yields (read, write, get_session_id)
         state.read_stream = streams[0]
         state.write_stream = streams[1]
 
@@ -284,14 +348,29 @@ class MCPManager:
             return f"Error calling {tool_name}: {e}"
 
     def get_server_status(self) -> dict[str, dict]:
-        """Return status dict for all known servers."""
+        """Return status dict for ALL configured servers.
+
+        Merges config-file servers with runtime state so that servers
+        that were never started (or were stopped) still appear in the UI.
+        """
         result = {}
+        # First, include all servers from the config file
+        for cfg in load_mcp_config():
+            result[cfg.name] = {
+                "connected": False,
+                "tool_count": 0,
+                "error": "",
+                "transport": cfg.transport,
+                "enabled": cfg.enabled,
+            }
+        # Overlay runtime state for servers that have been started
         for name, state in self._servers.items():
             result[name] = {
                 "connected": state.connected,
                 "tool_count": len(state.tools),
                 "error": state.error,
                 "transport": state.config.transport,
+                "enabled": state.config.enabled,
             }
         return result
 
