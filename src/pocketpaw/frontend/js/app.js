@@ -27,6 +27,11 @@ function app() {
     return {
         // ==================== Core State ====================
 
+        // Version & updates
+        appVersion: '',
+        latestVersion: '',
+        updateAvailable: false,
+
         // View state
         view: 'chat',
         showSettings: false,
@@ -288,6 +293,9 @@ function app() {
                 }
             });
 
+            // Check for version updates
+            this.checkForUpdates();
+
             // Initialize hash-based URL routing
             this.initHashRouter();
 
@@ -295,6 +303,20 @@ function app() {
             this.$nextTick(() => {
                 if (window.refreshIcons) window.refreshIcons();
             });
+        },
+
+        /**
+         * Check PyPI for newer version via /api/version endpoint.
+         */
+        async checkForUpdates() {
+            try {
+                const resp = await fetch('/api/version');
+                if (!resp.ok) return;
+                const data = await resp.json();
+                this.appVersion = data.current || '';
+                this.latestVersion = data.latest || '';
+                this.updateAvailable = !!data.update_available;
+            } catch (e) { /* silent */ }
         },
 
         /**

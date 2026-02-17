@@ -1675,10 +1675,28 @@ def _static_version() -> str:
     return hashlib.md5("|".join(mtimes).encode()).hexdigest()[:8]
 
 
+@app.get("/api/version")
+async def get_version_info():
+    """Return current version and update availability."""
+    from importlib.metadata import version as get_version
+
+    from pocketpaw.config import get_config_dir
+    from pocketpaw.update_check import check_for_updates
+
+    current = get_version("pocketpaw")
+    info = check_for_updates(current, get_config_dir())
+    return info or {"current": current, "latest": current, "update_available": False}
+
+
 @app.get("/")
 async def index(request: Request):
     """Serve the main dashboard page."""
-    return templates.TemplateResponse("base.html", {"request": request, "v": _static_version()})
+    from importlib.metadata import version as get_version
+
+    return templates.TemplateResponse(
+        "base.html",
+        {"request": request, "v": _static_version(), "app_version": get_version("pocketpaw")},
+    )
 
 
 # ==================== Auth Middleware ====================

@@ -404,6 +404,23 @@
           <div class="text-[11px] font-mono text-white/70" x-text="typeof status.battery === 'number' ? status.battery + '%' : status.battery"></div>
         </div>
       </div>
+
+      <!-- Version & Updates -->
+      <div class="mt-2 px-2 py-1.5 text-center space-y-0.5">
+        <div class="text-[10px] text-white/30 font-mono">
+          v<span x-text="appVersion || '...'"></span>
+          <template x-if="updateAvailable">
+            <span class="text-amber-400 ml-1">
+              &rarr; <span x-text="latestVersion"></span> available
+            </span>
+          </template>
+        </div>
+        <a href="https://github.com/pocketpaw/pocketpaw/releases"
+           target="_blank" rel="noopener"
+           class="text-[10px] text-white/20 hover:text-white/50 transition-colors">
+          Get release updates
+        </a>
+      </div>
     </div>
   </div>
 </aside>
