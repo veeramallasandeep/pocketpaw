@@ -36,73 +36,23 @@
 
 ## Quick Start
 
-```bash
-curl -fsSL https://pocketpaw.xyz/install.sh | sh
-```
-
-Or install directly:
-
-```bash
+### 🐧 Linux / macOS
+```sh
 pip install pocketpaw && pocketpaw
 ```
 
-**That's it.** One command. 30 seconds. Your own AI agent.
+### 🪟 Windows (PowerShell)
+```powershell
+pip install pocketpaw
+pocketpaw
+```
 
-I'm your self-hosted, cross-platform personal AI agent. The web dashboard opens automatically. Talk to me right in your browser, or connect me to Discord, Slack, WhatsApp, or Telegram and control me from anywhere. I run on _your_ machine, respect _your_ privacy, and I'm always here.
+> **Note for Windows users:** Some features (browser automation, shell tools) work best
+> under WSL2. Native Windows support covers the web dashboard and all LLM chat features.
 
-**No subscription. No cloud lock-in. Just you and me.**
-
-
-## Windows Installation Guide (Beginner Friendly)
-
-Follow these steps to install PocketPaw on Windows:
-
-1. Install Python 3.10 or higher from https://www.python.org/downloads/
-2. During installation, check "Add Python to PATH"
-3. Open Command Prompt or PowerShell
-4. Run the following command:
-
-   pip install pocketpaw
-
-5. After installation, start PocketPaw:
-
-   pocketpaw
-
-6. The dashboard will open at:
-   http://localhost:8888
-
-## Troubleshooting
-
-If you face issues during installation or running PocketPaw, try the following:
-
-1. Make sure Python 3.10 or higher is installed:
-   python --version
-
-2. If 'pocketpaw' command is not recognized:
-   - Restart your Command Prompt or PowerShell
-   - Run:
-     pip install --upgrade pocketpaw
-
-3. Make sure Python is added to PATH during installation.
-
-4. If the dashboard does not open automatically, open your browser and go to:
-   http://localhost:8888
-
-5. If installation fails, try upgrading pip:
-   python -m pip install --upgrade pip
-
-
-
-More install options
-PocketPaw will open the web dashboard...
-
-
-
-<details>
-<summary>More install options</summary>
-
-```bash
-# Isolated install
+### Other install options
+```sh
+# Isolated install (recommended — no global pip pollution)
 pipx install pocketpaw && pocketpaw
 
 # Run without installing
@@ -114,7 +64,8 @@ cd pocketpaw
 uv run pocketpaw
 ```
 
-</details>
+> ⚠️ **Note:** The `curl -fsSL https://pocketpaw.xyz/install.sh | sh` one-liner is
+> temporarily unavailable. Use the pip install above — it's equally fast.
 
 PocketPaw will open the web dashboard in your browser and be ready to go.
 No config files. No YAML. No dependency hell.
