@@ -2,7 +2,7 @@
   <img src="paw.png" alt="PocketPaw" width="100">
 </p>
 
-<h1 align="center">PocketPaw</h1>
+<h1 align="center">🐾 PocketPaw</h1>
 
 <p align="center">
   <strong>Your AI agent. Modular. Secure. Everywhere.</strong>
