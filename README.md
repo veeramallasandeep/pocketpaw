@@ -17,8 +17,6 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/pocketpaw/pocketpaw/releases/latest/download/PocketPaw-macOS-arm64.dmg"><img src="https://img.shields.io/badge/macOS-Download_.dmg-000000?style=for-the-badge&logo=apple&logoColor=white" alt="Download for macOS"></a>
-  &nbsp;
   <a href="https://github.com/pocketpaw/pocketpaw/releases/latest/download/PocketPaw-Setup.exe"><img src="https://img.shields.io/badge/Windows-Download_.exe-0078D4?style=for-the-badge&logo=windows&logoColor=white" alt="Download for Windows"></a>
 </p>
 
@@ -37,13 +35,12 @@
 
 ## 🚀 Quick Start
 
-### 🖥️ Desktop App
+### 🖥️ Via Desktop Installer
 
-Download the native app — includes auto-updates, system tray, and launches on startup.
+One-click installer that sets up Python, PocketPaw, and launches the dashboard. Native desktop app with auto-updates coming soon.
 
 | Platform | Download |
 | --- | --- |
-| **macOS** (Apple Silicon) | [PocketPaw-macOS-arm64.dmg](https://github.com/pocketpaw/pocketpaw/releases/latest/download/PocketPaw-macOS-arm64.dmg) |
 | **Windows** | [PocketPaw-Setup.exe](https://github.com/pocketpaw/pocketpaw/releases/latest/download/PocketPaw-Setup.exe) |
 
 ### 💻 Install via Terminal
